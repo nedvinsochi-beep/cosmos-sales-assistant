@@ -1,0 +1,7 @@
+{
+  "inactive_hours": 24,
+  "stage_age_limits_hours": {},
+  "required_fields_by_stage": {},
+  "first_call_activity_types": [],
+  "lead_entity_types": ["lead", "deal"]
+}

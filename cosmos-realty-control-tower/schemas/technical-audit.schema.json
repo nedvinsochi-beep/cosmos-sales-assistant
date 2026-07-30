@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cosmos Realty technical audit",
+  "type": "object",
+  "required": ["metadata_only", "personal_data_removed", "approved_read_methods"],
+  "properties": {
+    "metadata_only": {"const": true},
+    "personal_data_removed": {"const": true},
+    "approved_read_methods": {"type": "array", "items": {"type": "string"}},
+    "connection": {"type": "object"},
+    "fields": {"type": "object"}
+  },
+  "additionalProperties": false
+}

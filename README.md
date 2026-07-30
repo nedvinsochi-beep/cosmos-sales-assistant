@@ -40,6 +40,20 @@ AI- и BI-система управления продажами Cosmos Realty �
 5. Контроль РОПов для собственника.
 6. AI-сводки после проверки метрик.
 
+## Реализация CR-BI-001–005
+
+Рабочий read-only MVP находится в `cosmos-realty-control-tower/`.
+
+```bash
+cd cosmos-realty-control-tower
+uv sync
+uv run cosmos-control demo
+```
+
+Для реального аудита создайте локальный `.env` по `.env.example` и выполните
+`uv run cosmos-control audit-bitrix`. URL webhook и результаты аудита Git
+игнорирует.
+
 ## Старт Codex
 
 Открой `CODEX_START.md` и выполни инструкцию полностью.
