@@ -52,6 +52,26 @@ async def test_retry_after_transport_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_non_transient_http_error_is_not_retried() -> None:
+    attempts = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(403, json={"error": "forbidden"})
+
+    client = BitrixClient(
+        "https://example.invalid/rest/1/token/",
+        max_retries=3,
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.call("crm.activity.type.list")
+    await client.close()
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_write_method_is_blocked_before_network() -> None:
     requests = 0
 

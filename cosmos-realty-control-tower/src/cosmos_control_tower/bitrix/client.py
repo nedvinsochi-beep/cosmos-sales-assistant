@@ -5,17 +5,27 @@ from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from cosmos_control_tower.bitrix.errors import BitrixResponseError, UnsafeMethodError
 
 LOGGER = logging.getLogger(__name__)
 
+
+def _is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, httpx.TransportError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return False
+
 READ_ONLY_METHODS = frozenset(
     {
         "app.info",
+        "profile",
         "scope",
         "methods",
+        "server.time",
         "user.current",
         "user.get",
         "department.get",
@@ -23,11 +33,16 @@ READ_ONLY_METHODS = frozenset(
         "crm.lead.fields",
         "crm.deal.list",
         "crm.deal.fields",
+        "crm.dealcategory.list",
+        "crm.dealcategory.default.get",
+        "crm.dealcategory.stage.list",
         "crm.status.list",
+        "crm.status.entity.types",
         "crm.activity.list",
         "crm.activity.fields",
+        "crm.activity.type.list",
         "tasks.task.list",
-        "telephony.externalcall.searchcrmentities",
+        "task.item.list",
     }
 )
 
@@ -75,7 +90,7 @@ class BitrixClient:
         @retry(
             stop=stop_after_attempt(self._max_retries + 1),
             wait=wait_exponential(multiplier=0.25, min=0.25, max=4),
-            retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
+            retry=retry_if_exception(_is_transient_error),
             reraise=True,
         )
         async def perform() -> dict[str, Any]:

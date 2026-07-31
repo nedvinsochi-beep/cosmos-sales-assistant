@@ -19,6 +19,7 @@ app = typer.Typer(help="Cosmos Realty Control Tower read-only tools")
 
 def _configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @app.command("audit-bitrix")
