@@ -98,10 +98,18 @@ class OperationalService:
         self.first_call_provider_ids = first_call_provider_ids or set()
 
     async def collect(self, *, limit: int | None = None) -> dict[str, Any]:
-        users_payload = await self.client.call("user.get", {"FILTER[ACTIVE]": "Y"})
+        active_users_payload = await self.client.call("user.get", {"FILTER[ACTIVE]": "Y"})
+        inactive_users_payload = await self.client.call("user.get", {"FILTER[ACTIVE]": "N"})
         departments_payload = await self.client.call("department.get")
-        users = self._rows(users_payload)
+        active_users = self._rows(active_users_payload)
+        inactive_users = self._rows(inactive_users_payload)
+        users = active_users + inactive_users
         departments = self._rows(departments_payload)
+        user_active = {
+            str(user.get("ID")): user.get("ACTIVE") in {True, "Y"}
+            for user in users
+            if user.get("ID") is not None
+        }
         user_departments = {
             str(user.get("ID")): self._first_department(user.get("UF_DEPARTMENT"))
             for user in users
@@ -126,15 +134,24 @@ class OperationalService:
 
         records = [
             self._record(
-                "lead", row, user_departments, activity_index, activity_data_complete=limit is None
+                "lead",
+                row,
+                user_departments,
+                user_active,
+                activity_index,
+                activity_data_complete=limit is None,
             )
             for row in leads
         ] + [
             self._record(
-                "deal", row, user_departments, activity_index, activity_data_complete=limit is None
+                "deal",
+                row,
+                user_departments,
+                user_active,
+                activity_index,
+                activity_data_complete=limit is None,
             )
             for row in deals
-            if str(row.get("CATEGORY_ID", "0")) == "0"
         ]
         findings = [
             item
@@ -151,6 +168,10 @@ class OperationalService:
             "violations": [finding.model_dump(mode="json") for finding in findings],
             "departments": sorted(set(filter(None, user_departments.values()))),
             "department_heads": department_heads,
+            "employee_status_counts": {
+                "active": len(active_users),
+                "inactive": len(inactive_users),
+            },
             "source_counts": {
                 "leads": len(leads),
                 "deals_main_pipeline": sum(
@@ -166,6 +187,7 @@ class OperationalService:
         entity_type: str,
         row: dict[str, Any],
         user_departments: dict[str, str | None],
+        user_active: dict[str, bool],
         activity_index: dict[tuple[str, str], list[dict[str, Any]]],
         *,
         activity_data_complete: bool,
@@ -203,6 +225,7 @@ class OperationalService:
             entity_type=entity_type,
             source_id=source_id,
             assigned_to_id=assignee,
+            assignee_active=user_active.get(assignee or ""),
             department_id=user_departments.get(assignee or ""),
             stage_id=stage_id,
             category_id=str(row.get("CATEGORY_ID")) if row.get("CATEGORY_ID") is not None else None,

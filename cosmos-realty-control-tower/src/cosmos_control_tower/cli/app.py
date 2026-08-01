@@ -9,10 +9,17 @@ import typer
 from cosmos_control_tower.audit.rules import AuditRules, evaluate_record
 from cosmos_control_tower.audit.service import AuditService
 from cosmos_control_tower.bitrix.client import BitrixClient
+from cosmos_control_tower.calibration.report import generate_calibration_reports
+from cosmos_control_tower.calibration.service import (
+    CalibrationRules,
+    anonymized_examples,
+    calibration_summary,
+    classify_records,
+)
 from cosmos_control_tower.config import Settings
 from cosmos_control_tower.metrics.basic import broker_metrics, department_metrics
 from cosmos_control_tower.metrics.operational import build_dashboard_data
-from cosmos_control_tower.models.records import SourceRecord, Violation
+from cosmos_control_tower.models.records import CalibratedRecord, SourceRecord, Violation
 from cosmos_control_tower.operational.demo import demo_snapshot
 from cosmos_control_tower.operational.service import (
     OperationalService,
@@ -25,6 +32,8 @@ from cosmos_control_tower.robots.dry_run import preview_actions
 
 app = typer.Typer(help="Cosmos Realty Control Tower read-only tools")
 DEFAULT_ROP_OUTPUT = Path("output/rop")
+DEFAULT_CALIBRATION_OUTPUT = Path("output")
+DEFAULT_CALIBRATION_RULES = Path("config/calibration-rules.example.json")
 
 
 def _configure_logging() -> None:
@@ -93,11 +102,28 @@ def report(
     rop: str | None = typer.Option(None, help="ID РОПа"),
     source: str | None = typer.Option(None, help="ID источника"),
     stage: str | None = typer.Option(None, help="ID стадии или статуса"),
+    category: str | None = typer.Option(None, help="ID воронки"),
+    work_scope: str = typer.Option(
+        "operational", help="operational, warm, archive или all"
+    ),
+    active_employees_only: bool = typer.Option(
+        True, "--active-employees-only/--include-inactive-employees"
+    ),
+    created_after: str | None = typer.Option(None, help="Дата создания от YYYY-MM-DD"),
+    last_activity_after: str | None = typer.Option(
+        None, help="Последняя активность от YYYY-MM-DD"
+    ),
     period: str = typer.Option("week", help="today, week или month"),
     output: Path = typer.Option(DEFAULT_ROP_OUTPUT, help="Каталог отчёта"),  # noqa: B008
     demo_mode: bool = typer.Option(False, "--demo", help="Без подключения к Bitrix24"),
     snapshot_file: Path | None = typer.Option(  # noqa: B008
         None, "--snapshot", help="Повторно построить отчёт из локального снимка"
+    ),
+    calibration_output: Path = typer.Option(  # noqa: B008
+        DEFAULT_CALIBRATION_OUTPUT, help="Каталог отчёта калибровки"
+    ),
+    calibration_rules: Path = typer.Option(  # noqa: B008
+        DEFAULT_CALIBRATION_RULES, help="Предлагаемые правила периметра"
     ),
     limit: int = typer.Option(0, min=0, help="Лимит сущностей для безопасной проверки"),
 ) -> None:
@@ -105,10 +131,10 @@ def report(
     _configure_logging()
     if period not in {"today", "week", "month"}:
         raise typer.BadParameter("period должен быть today, week или month")
-    if sum(value is not None for value in (department, broker, rop, source, stage)) > 1:
-        raise typer.BadParameter(
-            "Выберите один фильтр: department, broker, rop, source или stage"
-        )
+    if sum(value is not None for value in (department, broker, rop)) > 1:
+        raise typer.BadParameter("Выберите один фильтр: department, broker или rop")
+    if work_scope not in {"operational", "warm", "archive", "all"}:
+        raise typer.BadParameter("work-scope должен быть operational, warm, archive или all")
 
     if demo_mode and snapshot_file:
         raise typer.BadParameter("Нельзя одновременно использовать --demo и --snapshot")
@@ -144,8 +170,19 @@ def report(
 
     records = records_from_snapshot(snapshot)
     violations = violations_from_snapshot(snapshot)
-    records, violations, scope = _apply_scope(
+    calibration_config = _load_calibration_rules(calibration_rules)
+    calibrated = classify_records(
         records,
+        calibration_config,
+        now=_snapshot_time(snapshot),
+    )
+    calibration = calibration_summary(calibrated, violations)
+    examples = anonymized_examples(calibrated, violations)
+    generate_calibration_reports(calibration_output, calibrated, calibration, examples)
+
+    selected_records = _records_for_work_scope(calibrated, work_scope)
+    selected_records, selected_violations, scope = _apply_scope(
+        selected_records,
         violations,
         snapshot.get("department_heads", {}),
         department=department,
@@ -153,26 +190,98 @@ def report(
         rop=rop,
         source=source,
         stage=stage,
+        category=category,
+        active_employees_only=active_employees_only,
+        created_after=created_after,
+        last_activity_after=last_activity_after,
         period=period,
     )
     dashboard = build_dashboard_data(
-        records,
-        violations,
+        selected_records,
+        selected_violations,
         generated_at=str(snapshot.get("generated_at", "")),
         mode=str(snapshot.get("mode", "unknown")),
         limitations=[str(item) for item in snapshot.get("limitations", [])],
         period_start=_period_start(period),
     )
-    actions = preview_actions(violations)
-    generate_operational_reports(output, dashboard, actions, scope=scope)
+    actions = preview_actions(selected_violations)
+    generate_operational_reports(
+        output,
+        dashboard,
+        actions,
+        scope=f"{scope}; группа {work_scope}",
+        scope_links=_main_scope_links(),
+    )
+    for candidate_scope in ("operational", "warm", "archive", "all"):
+        scope_records = _records_for_work_scope(calibrated, candidate_scope)
+        scope_records, scope_violations, scope_label = _apply_scope(
+            scope_records,
+            violations,
+            snapshot.get("department_heads", {}),
+            department=department,
+            broker=broker,
+            rop=rop,
+            source=source,
+            stage=stage,
+            category=category,
+            active_employees_only=False,
+            created_after=created_after,
+            last_activity_after=last_activity_after,
+            period=period,
+        )
+        scope_dashboard = build_dashboard_data(
+            scope_records,
+            scope_violations,
+            generated_at=str(snapshot.get("generated_at", "")),
+            mode=str(snapshot.get("mode", "unknown")),
+            limitations=[str(item) for item in snapshot.get("limitations", [])],
+            period_start=_period_start(period),
+        )
+        scope_actions = preview_actions(scope_violations)
+        generate_operational_reports(
+            output / "scopes" / candidate_scope,
+            scope_dashboard,
+            scope_actions,
+            scope=f"{scope_label}; группа {candidate_scope}",
+            scope_links=_nested_scope_links(),
+        )
     typer.echo(f"ROP dashboard created: {output / 'rop-dashboard.html'}")
     typer.echo(f"Dry-run actions: {len(actions)}; Bitrix24 writes: 0")
+    typer.echo(
+        "Calibration: "
+        f"operational={calibration['scope_counts'].get('operational', 0)}, "
+        f"warm={calibration['scope_counts'].get('warm', 0)}, "
+        f"archive={calibration['scope_counts'].get('archive', 0)}"
+    )
 
 
 def _load_rules(path: Path) -> AuditRules:
     if not path.exists():
         return AuditRules()
     return AuditRules.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _load_calibration_rules(path: Path) -> CalibrationRules:
+    if not path.exists():
+        return CalibrationRules()
+    return CalibrationRules.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _snapshot_time(snapshot: dict[str, object]) -> datetime:
+    value = snapshot.get("generated_at")
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return datetime.now(UTC)
+
+
+def _records_for_work_scope(
+    calibrated: list[CalibratedRecord], work_scope: str
+) -> list[SourceRecord]:
+    return [
+        item.record
+        for item in calibrated
+        if work_scope == "all" or item.work_scope == work_scope
+    ]
 
 
 def _apply_scope(
@@ -185,6 +294,10 @@ def _apply_scope(
     rop: str | None,
     source: str | None,
     stage: str | None,
+    category: str | None,
+    active_employees_only: bool,
+    created_after: str | None,
+    last_activity_after: str | None,
     period: str,
 ) -> tuple[list[SourceRecord], list[Violation], str]:
     selected_departments = [department] if department else []
@@ -194,21 +307,41 @@ def _apply_scope(
         ]
         if not selected_departments:
             raise typer.BadParameter("Для этого РОПа не найден отдел")
+    labels: list[str] = []
     if broker:
         records = [item for item in records if item.assigned_to_id == broker]
-        scope = f"брокер {broker}, период {period}"
+        labels.append(f"брокер {broker}")
     elif selected_departments:
         records = [item for item in records if item.department_id in selected_departments]
         label = f"РОП {rop}" if rop else f"отдел {selected_departments[0]}"
-        scope = f"{label}, период {period}"
-    elif source:
+        labels.append(label)
+    if source:
         records = [item for item in records if item.source_channel_id == source]
-        scope = f"источник {source}, период {period}"
-    elif stage:
+        labels.append(f"источник {source}")
+    if stage:
         records = [item for item in records if item.stage_id == stage]
-        scope = f"стадия {stage}, период {period}"
-    else:
-        scope = f"все отделы, период {period}"
+        labels.append(f"стадия {stage}")
+    if category:
+        records = [item for item in records if item.category_id == category]
+        labels.append(f"воронка {category}")
+    if active_employees_only:
+        records = [item for item in records if item.assignee_active is True]
+        labels.append("только действующие сотрудники")
+    if created_after:
+        created_cutoff = _parse_date_filter(created_after, "created-after")
+        records = [
+            item for item in records if item.created_at and item.created_at >= created_cutoff
+        ]
+        labels.append(f"созданы с {created_after}")
+    if last_activity_after:
+        activity_cutoff = _parse_date_filter(last_activity_after, "last-activity-after")
+        records = [
+            item
+            for item in records
+            if item.last_activity_at and item.last_activity_at >= activity_cutoff
+        ]
+        labels.append(f"активность с {last_activity_after}")
+    scope = ", ".join(labels or ["все отделы"]) + f", период {period}"
     record_keys = {(item.entity_type, item.source_id) for item in records}
     filtered_violations = [
         item
@@ -225,6 +358,31 @@ def _period_start(period: str) -> datetime:
     if period == "week":
         return now - timedelta(days=7)
     return now - timedelta(days=30)
+
+
+def _parse_date_filter(value: str, option: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value).replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{option}: используйте YYYY-MM-DD") from exc
+
+
+def _main_scope_links() -> list[tuple[str, str]]:
+    return [
+        ("Оперативная работа", "scopes/operational/rop-dashboard.html"),
+        ("Прогрев", "scopes/warm/rop-dashboard.html"),
+        ("Архив", "scopes/archive/rop-dashboard.html"),
+        ("Вся база", "scopes/all/rop-dashboard.html"),
+    ]
+
+
+def _nested_scope_links() -> list[tuple[str, str]]:
+    return [
+        ("Оперативная работа", "../operational/rop-dashboard.html"),
+        ("Прогрев", "../warm/rop-dashboard.html"),
+        ("Архив", "../archive/rop-dashboard.html"),
+        ("Вся база", "../all/rop-dashboard.html"),
+    ]
 
 
 if __name__ == "__main__":

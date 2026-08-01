@@ -62,7 +62,9 @@ async def test_live_collector_reads_only_structural_fields_and_masks_webhook() -
         method = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
         seen_methods.append(method)
         responses = {
-            "user.get": {"result": [{"ID": "10", "UF_DEPARTMENT": ["2"]}]},
+            "user.get": {
+                "result": [{"ID": "10", "ACTIVE": True, "UF_DEPARTMENT": ["2"]}]
+            },
             "department.get": {"result": [{"ID": "2", "UF_HEAD": "20"}]},
             "crm.lead.list": {
                 "result": [

@@ -8,6 +8,7 @@ class SourceRecord(BaseModel):
     entity_type: str
     source_id: str
     assigned_to_id: str | None = None
+    assignee_active: bool | None = None
     department_id: str | None = None
     stage_id: str | None = None
     created_at: datetime | None = None
@@ -50,3 +51,10 @@ class DryRunAction(BaseModel):
     proposed_action: str
     execute_after: datetime | None = None
     dry_run: bool = True
+
+
+class CalibratedRecord(BaseModel):
+    record: SourceRecord
+    work_scope: str
+    reason_code: str
+    rule_status: str = "PROPOSED"

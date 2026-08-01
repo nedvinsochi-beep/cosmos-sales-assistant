@@ -17,6 +17,8 @@ def test_demo_report_cli_generates_all_formats(tmp_path: Path) -> None:
             "week",
             "--output",
             str(tmp_path),
+            "--calibration-output",
+            str(tmp_path),
         ],
     )
     assert result.exit_code == 0, result.output
@@ -29,3 +31,5 @@ def test_demo_report_cli_generates_all_formats(tmp_path: Path) -> None:
         "rop-brokers.csv",
         "dry-run-actions.csv",
     }.issubset({path.name for path in tmp_path.iterdir()})
+    assert (tmp_path / "calibration-summary.html").exists()
+    assert (tmp_path / "calibration-summary.csv").exists()

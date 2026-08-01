@@ -29,6 +29,18 @@ uv run cosmos-control report --source WEB --period month
 uv run cosmos-control report --stage NEW --period today
 ```
 
+По умолчанию показывается только предлагаемый оперативный периметр. Переключение:
+
+```bash
+uv run cosmos-control report --work-scope operational
+uv run cosmos-control report --work-scope warm
+uv run cosmos-control report --work-scope archive --include-inactive-employees
+uv run cosmos-control report --work-scope all
+```
+
+Правила калибровки имеют статус `PROPOSED_REQUIRES_APPROVAL`: они уменьшают
+ложные тревоги, но не являются утверждённым регламентом.
+
 Команда создаёт в `output/rop/`:
 
 - `rop-dashboard.html` — локальный экран РОПа;
@@ -36,6 +48,10 @@ uv run cosmos-control report --stage NEW --period today
 - `rop-control.csv` — карточки, требующие внимания;
 - `rop-brokers.csv` — нагрузка и дисциплина брокеров;
 - `dry-run-actions.csv` — будущие действия роботов без выполнения.
+
+Дополнительно создаются `output/calibration-summary.html` и
+`output/calibration-summary.csv` с причинами исключений и обезличенными
+примерами.
 
 Для короткой live-проверки можно ограничить число прочитанных записей:
 
@@ -66,4 +82,6 @@ uv run mypy
 ```
 
 Подробности: `docs/architecture.md`, `docs/control-rules.md`,
-`docs/cosmos-business-data-model.md`, `docs/security.md`.
+`docs/rules-calibration.md`, `docs/operational-scope.md`,
+`docs/exclusion-rules.md`, `docs/cosmos-business-data-model.md`,
+`docs/security.md`.

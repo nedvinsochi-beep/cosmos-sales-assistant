@@ -41,6 +41,8 @@ DASHBOARD_TEMPLATE = """<!doctype html>
     tr:last-child td { border:0; } a { color:var(--accent); text-decoration:none; }
     .risk-high,.priority { color:var(--danger); font-weight:700; }
     .risk-medium { color:var(--warn); font-weight:700; } .risk-low { color:var(--ok); }
+    .tabs { margin:0 0 16px; display:flex; flex-wrap:wrap; gap:7px; }
+    .tabs a { padding:8px 11px; background:#e7edfb; border-radius:8px; }
     .barrow { display:grid; grid-template-columns:minmax(150px,240px) 1fr 55px; gap:12px;
       align-items:center; padding:8px 14px; }
     .bar { height:10px; background:#e8edf7; border-radius:10px; overflow:hidden; }
@@ -54,6 +56,8 @@ DASHBOARD_TEMPLATE = """<!doctype html>
 <header><h1>Cosmos Realty — контроль РОПа</h1>
 <p>{{ scope }} · {{ mode }} · снимок {{ generated_at }}</p></header>
 <main>
+  <nav class="tabs">{% for label,href in scope_links %}
+    <a href="{{ href }}">{{ label }}</a>{% endfor %}</nav>
   <div class="notice"><b>Безопасный режим:</b> данные только прочитаны. Ни одна задача,
     стадия, карточка или уведомление в Bitrix24 не изменены.</div>
   <h2>Сегодня — требует внимания</h2>
@@ -115,6 +119,7 @@ def generate_operational_reports(
     actions: list[DryRunAction],
     *,
     scope: str,
+    scope_links: list[tuple[str, str]] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     action_rows = [item.model_dump(mode="json") for item in actions]
@@ -150,6 +155,7 @@ def generate_operational_reports(
         plan_fact=dashboard["plan_fact"],
         forecast=dashboard["forecast"],
         recommendations=dashboard["recommendations"],
+        scope_links=scope_links or [],
     )
     (output_dir / "rop-dashboard.html").write_text(html, encoding="utf-8")
 
