@@ -1,5 +1,8 @@
 {
   "inactive_hours": 24,
+  "inactive_thresholds_hours": [24, 48, 72],
+  "new_lead_acceptance_minutes": 15,
+  "new_lead_statuses": ["NEW"],
   "stage_age_limits_hours": {},
   "required_fields_by_stage": {},
   "first_call_activity_types": [],

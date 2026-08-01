@@ -8,6 +8,9 @@ from cosmos_control_tower.models.records import SourceRecord, Violation
 
 class AuditRules(BaseModel):
     inactive_hours: int = Field(default=24, gt=0)
+    inactive_thresholds_hours: list[int] = Field(default_factory=lambda: [24, 48, 72])
+    new_lead_acceptance_minutes: int = Field(default=15, gt=0)
+    new_lead_statuses: list[str] = Field(default_factory=lambda: ["NEW"])
     stage_age_limits_hours: dict[str, int] = Field(default_factory=dict)
     required_fields_by_stage: dict[str, list[str]] = Field(default_factory=dict)
     first_call_activity_types: list[str] = Field(default_factory=list)
@@ -24,6 +27,7 @@ def _violation(
         source_id=record.source_id,
         assigned_to_id=record.assigned_to_id,
         department_id=record.department_id,
+        card_url=record.card_url,
         evidence=evidence,
     )
 
@@ -37,12 +41,16 @@ def evaluate_record(
     now = now or datetime.now(UTC)
     findings: list[Violation] = []
 
-    if record.has_open_activity is False:
+    if not record.activity_data_complete:
+        findings.append(_violation("NO_NEXT_TASK", record, "BLOCKED_BY_DATA", {}))
+    elif record.has_open_activity is False:
         findings.append(_violation("NO_NEXT_TASK", record, "VIOLATION", {}))
     elif record.has_open_activity is None:
         findings.append(_violation("NO_NEXT_TASK", record, "BLOCKED_BY_DATA", {}))
 
-    if record.next_activity_at and record.next_activity_at < now:
+    if not record.activity_data_complete:
+        findings.append(_violation("OVERDUE_TASK", record, "BLOCKED_BY_DATA", {}))
+    elif record.next_activity_at and record.next_activity_at < now:
         findings.append(
             _violation(
                 "OVERDUE_TASK",
@@ -54,22 +62,52 @@ def evaluate_record(
     elif record.next_activity_at is None:
         findings.append(_violation("OVERDUE_TASK", record, "BLOCKED_BY_DATA", {}))
 
-    if record.has_first_call is False:
+    if not record.activity_data_complete:
+        findings.append(_violation("NO_FIRST_CALL", record, "BLOCKED_BY_DATA", {}))
+    elif record.has_first_call is False:
         findings.append(_violation("NO_FIRST_CALL", record, "VIOLATION", {}))
     elif record.has_first_call is None:
         findings.append(_violation("NO_FIRST_CALL", record, "BLOCKED_BY_DATA", {}))
 
-    if record.updated_at and now - record.updated_at > timedelta(hours=rules.inactive_hours):
+    # updated_at is a legacy fallback for old snapshots only. Live collection always
+    # supplies created_at and never presents DATE_MODIFY as a confirmed activity.
+    activity_anchor = record.last_activity_at or record.created_at or record.updated_at
+    if not record.activity_data_complete:
+        findings.append(_violation("INACTIVE_ENTITY", record, "BLOCKED_BY_DATA", {}))
+    elif activity_anchor:
+        inactive_hours = (now - activity_anchor).total_seconds() / 3600
+        crossed = [value for value in rules.inactive_thresholds_hours if inactive_hours >= value]
+        if crossed:
+            findings.append(
+                _violation(
+                    "INACTIVE_ENTITY",
+                    record,
+                    "VIOLATION",
+                    {
+                        "inactive_hours": round(inactive_hours, 1),
+                        "escalation_hours": max(crossed),
+                    },
+                )
+            )
+    else:
+        findings.append(_violation("INACTIVE_ENTITY", record, "BLOCKED_BY_DATA", {}))
+
+    if (
+        record.entity_type == "lead"
+        and record.stage_id in rules.new_lead_statuses
+        and record.created_at
+        and now - record.created_at > timedelta(minutes=rules.new_lead_acceptance_minutes)
+        and record.last_activity_at is None
+        and record.activity_data_complete
+    ):
         findings.append(
             _violation(
-                "INACTIVE_ENTITY",
+                "UNACCEPTED_LEAD",
                 record,
                 "VIOLATION",
-                {"inactive_hours_limit": rules.inactive_hours},
+                {"acceptance_limit_minutes": rules.new_lead_acceptance_minutes},
             )
         )
-    elif record.updated_at is None:
-        findings.append(_violation("INACTIVE_ENTITY", record, "BLOCKED_BY_DATA", {}))
 
     if record.stage_id and record.stage_changed_at:
         limit = rules.stage_age_limits_hours.get(record.stage_id)
