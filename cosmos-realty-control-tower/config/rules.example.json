@@ -1,0 +1,77 @@
+{
+  "rules": [
+    {
+      "rule_id": "MISSED_LEAD_ACCEPTANCE",
+      "name": "Потеряшка",
+      "description": "Контроль принятия назначенного брокеру лида до 23:50",
+      "enabled": true,
+      "mode": "DRY_RUN",
+      "schedule": "50 23 * * *",
+      "timezone": "Europe/Moscow",
+      "entity_type": "lead",
+      "scope": {"pipeline": "main", "stage_ids": ["NEW"]},
+      "conditions": [{"field": "stage_id", "operator": "eq", "value": "NEW"}],
+      "exclusions": [
+        {"type": "unassigned_pool"},
+        {"type": "inactive_or_special_users"}
+      ],
+      "deadline": {"type": "calendar_day", "time": "23:50"},
+      "violation": {
+        "code": "MISSED_LEAD_ACCEPTANCE",
+        "accepted_stage_id": "IN_PROCESS"
+      },
+      "actions": [
+        {"type": "assign_to_rop"},
+        {"type": "add_previous_broker_observer"},
+        {"type": "add_poteryashka_observer"},
+        {"type": "add_comment"},
+        {"type": "record_violation"}
+      ],
+      "escalation": [{"level": 1, "target": "rop", "at": "23:50"}],
+      "kpi": ["assigned", "accepted", "returned", "missed_pct", "repeat_week_month"],
+      "idempotency_key": "rule_id|entity_type|entity_id|assigned_user_id|assigned_at",
+      "owner": "Cosmos Realty owner",
+      "version": "1.0.0",
+      "evaluator": "missed_lead_acceptance"
+    },
+    {
+      "rule_id": "NO_NEXT_STEP",
+      "name": "Без следующего шага",
+      "description": "Активная карточка брокера должна иметь будущее действие с датой",
+      "enabled": true,
+      "mode": "DRY_RUN",
+      "schedule": "0 * * * *",
+      "timezone": "Europe/Moscow",
+      "entity_type": "lead_or_deal",
+      "scope": {"work_scope": "operational", "entity_types": ["lead", "deal"]},
+      "conditions": [
+        {"field": "next_activity_at", "operator": "missing_or_not_future"},
+        {"field": "next_task_at", "operator": "missing_or_not_future"}
+      ],
+      "exclusions": [
+        {"type": "approved_waiting_or_warm", "stage_ids": ["PROCESSED", "2", "UC_ZL59WW"]},
+        {"type": "closed_archive_test_service"}
+      ],
+      "deadline": {"type": "resolution_window", "minutes": 120},
+      "violation": {"code": "NO_NEXT_STEP", "requires_complete_task_evidence": true},
+      "actions": [{"type": "notify_broker_preview"}],
+      "escalation": [
+        {"level": 1, "target": "broker", "after_minutes": 0},
+        {"level": 2, "target": "rop", "after_minutes": 120},
+        {"level": 3, "target": "rop_kpi", "repeat_count": 3}
+      ],
+      "kpi": [
+        "active_cards",
+        "with_next_step",
+        "without_next_step",
+        "without_next_step_pct",
+        "average_resolution_time",
+        "repeat_week_month"
+      ],
+      "idempotency_key": "rule_id|entity_type|entity_id|calendar_day",
+      "owner": "Head of Sales",
+      "version": "0.1.0",
+      "evaluator": "no_next_step"
+    }
+  ]
+}

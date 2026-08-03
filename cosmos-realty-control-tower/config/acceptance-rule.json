@@ -1,0 +1,7 @@
+{
+  "rule_id": "MISSED_LEAD_ACCEPTANCE",
+  "source_stage_id": "NEW",
+  "target_stage_id": "IN_PROCESS",
+  "check_time": "23:50",
+  "timezone": "Europe/Moscow"
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.cosmos.acceptance-control</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/mihailgelash/cosmos-sales-assistant/cosmos-realty-control-tower</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string><string>uv</string><string>run</string>
+    <string>cosmos-control</string><string>acceptance-control</string>
+    <string>--dry-run</string><string>--as-of</string><string>23:50</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>50</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/cosmos-acceptance-control.log</string>
+  <key>StandardErrorPath</key><string>/tmp/cosmos-acceptance-control.error.log</string>
+</dict>
+</plist>

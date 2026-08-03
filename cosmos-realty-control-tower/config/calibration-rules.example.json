@@ -1,0 +1,8 @@
+{
+  "rule_status": "PROPOSED_REQUIRES_APPROVAL",
+  "operational_recent_days": 7,
+  "warm_future_days": 7,
+  "warm_stage_ids": ["PROCESSED", "2", "UC_ZL59WW"],
+  "excluded_stage_ids": ["UC_OWVT1B"],
+  "technical_category_ids": ["10", "12"]
+}
