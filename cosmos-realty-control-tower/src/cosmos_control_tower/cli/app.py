@@ -3,9 +3,15 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import typer
 
+from cosmos_control_tower.acceptance.demo import acceptance_demo_snapshot
+from cosmos_control_tower.acceptance.engine import evaluate_acceptance
+from cosmos_control_tower.acceptance.models import AcceptanceRule, OrganizationMap
+from cosmos_control_tower.acceptance.report import generate_acceptance_reports
+from cosmos_control_tower.acceptance.service import AcceptanceService
 from cosmos_control_tower.audit.rules import AuditRules, evaluate_record
 from cosmos_control_tower.audit.service import AuditService
 from cosmos_control_tower.bitrix.client import BitrixClient
@@ -34,6 +40,9 @@ app = typer.Typer(help="Cosmos Realty Control Tower read-only tools")
 DEFAULT_ROP_OUTPUT = Path("output/rop")
 DEFAULT_CALIBRATION_OUTPUT = Path("output")
 DEFAULT_CALIBRATION_RULES = Path("config/calibration-rules.example.json")
+DEFAULT_ACCEPTANCE_OUTPUT = Path("output/acceptance-control")
+DEFAULT_ACCEPTANCE_RULE = Path("config/acceptance-rule.json")
+DEFAULT_ORGANIZATION_MAP = Path("config/organization-map.example.json")
 
 
 def _configure_logging() -> None:
@@ -95,6 +104,81 @@ def demo(output: Path = Path("output")) -> None:
     typer.echo(f"Sanitized demo reports created: {output}")
 
 
+@app.command("acceptance-control")
+def acceptance_control(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Только preview"),
+    apply: bool = typer.Option(False, "--apply", help="Применение, закрыто safety-gate"),
+    as_of: str = typer.Option("23:50", help="HH:MM или ISO datetime"),
+    output: Path = typer.Option(DEFAULT_ACCEPTANCE_OUTPUT),  # noqa: B008
+    demo_mode: bool = typer.Option(False, "--demo"),
+    snapshot_file: Path | None = typer.Option(None, "--snapshot"),  # noqa: B008
+    rule_config: Path = typer.Option(DEFAULT_ACCEPTANCE_RULE),  # noqa: B008
+    organization_map: Path = typer.Option(DEFAULT_ORGANIZATION_MAP),  # noqa: B008
+    ledger: Path = typer.Option(Path("output/acceptance-control/ledger.json")),  # noqa: B008
+) -> None:
+    """Preview the approved 23:50 lead acceptance rule without CRM writes."""
+    _configure_logging()
+    if dry_run == apply:
+        raise typer.BadParameter("Укажите ровно один режим: --dry-run или --apply")
+    if apply:
+        typer.echo(
+            "APPLY заблокирован: требуется отдельное разрешение Михаила, заполненный "
+            "organization-map и подтверждённый источник assigned_at."
+        )
+        raise typer.Exit(code=2)
+    rule = AcceptanceRule.model_validate_json(rule_config.read_text(encoding="utf-8"))
+    organization = OrganizationMap.model_validate_json(organization_map.read_text(encoding="utf-8"))
+    check_at = _acceptance_as_of(as_of, rule.timezone)
+    if demo_mode and snapshot_file:
+        raise typer.BadParameter("Нельзя одновременно использовать --demo и --snapshot")
+    if demo_mode:
+        snapshot = acceptance_demo_snapshot(check_at)
+        if organization.poteryashka_user_id is None:
+            organization.poteryashka_user_id = "999"
+    elif snapshot_file:
+        snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    else:
+        settings = Settings()  # type: ignore[call-arg]
+
+        async def collect_acceptance() -> dict[str, object]:
+            webhook = settings.webhook_secret.get_secret_value()
+            async with BitrixClient(
+                webhook,
+                timeout=settings.bitrix_timeout_seconds,
+                rate_limit_per_second=settings.bitrix_rate_limit_per_second,
+                max_retries=settings.bitrix_max_retries,
+            ) as client:
+                return await AcceptanceService(client, webhook).collect(
+                    day_start=check_at.replace(hour=0, minute=0, second=0, microsecond=0)
+                )
+
+        snapshot = asyncio.run(collect_acceptance())
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "acceptance-snapshot.json").write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    records = records_from_snapshot(snapshot)
+    raw_heads = snapshot.get("department_heads", {})
+    heads = (
+        {str(key): str(value) for key, value in raw_heads.items()}
+        if isinstance(raw_heads, dict)
+        else {}
+    )
+    report_data = evaluate_acceptance(
+        records,
+        heads,
+        organization,
+        rule,
+        as_of=check_at,
+        processed_keys=_load_processed_keys(ledger),
+    )
+    generate_acceptance_reports(output, report_data)
+    typer.echo(f"Acceptance dry-run: {output / 'acceptance-report.html'}")
+    typer.echo(f"Eligible actions: {report_data.eligible_to_return}")
+    typer.echo(f"Blocked candidates: {len(report_data.blocked_candidates)}")
+    typer.echo("Bitrix24 writes: 0")
+
+
 @app.command()
 def report(
     department: str | None = typer.Option(None, help="ID отдела"),
@@ -103,16 +187,12 @@ def report(
     source: str | None = typer.Option(None, help="ID источника"),
     stage: str | None = typer.Option(None, help="ID стадии или статуса"),
     category: str | None = typer.Option(None, help="ID воронки"),
-    work_scope: str = typer.Option(
-        "operational", help="operational, warm, archive или all"
-    ),
+    work_scope: str = typer.Option("operational", help="operational, warm, archive или all"),
     active_employees_only: bool = typer.Option(
         True, "--active-employees-only/--include-inactive-employees"
     ),
     created_after: str | None = typer.Option(None, help="Дата создания от YYYY-MM-DD"),
-    last_activity_after: str | None = typer.Option(
-        None, help="Последняя активность от YYYY-MM-DD"
-    ),
+    last_activity_after: str | None = typer.Option(None, help="Последняя активность от YYYY-MM-DD"),
     period: str = typer.Option("week", help="today, week или month"),
     output: Path = typer.Option(DEFAULT_ROP_OUTPUT, help="Каталог отчёта"),  # noqa: B008
     demo_mode: bool = typer.Option(False, "--demo", help="Без подключения к Bitrix24"),
@@ -205,12 +285,14 @@ def report(
         period_start=_period_start(period),
     )
     actions = preview_actions(selected_violations)
+    acceptance_summary = _load_optional_json(DEFAULT_ACCEPTANCE_OUTPUT / "acceptance-report.json")
     generate_operational_reports(
         output,
         dashboard,
         actions,
         scope=f"{scope}; группа {work_scope}",
         scope_links=_main_scope_links(),
+        acceptance_summary=acceptance_summary,
     )
     for candidate_scope in ("operational", "warm", "archive", "all"):
         scope_records = _records_for_work_scope(calibrated, candidate_scope)
@@ -244,6 +326,7 @@ def report(
             scope_actions,
             scope=f"{scope_label}; группа {candidate_scope}",
             scope_links=_nested_scope_links(),
+            acceptance_summary=acceptance_summary,
         )
     typer.echo(f"ROP dashboard created: {output / 'rop-dashboard.html'}")
     typer.echo(f"Dry-run actions: {len(actions)}; Bitrix24 writes: 0")
@@ -253,6 +336,13 @@ def report(
         f"warm={calibration['scope_counts'].get('warm', 0)}, "
         f"archive={calibration['scope_counts'].get('archive', 0)}"
     )
+
+
+def _load_optional_json(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
 
 
 def _load_rules(path: Path) -> AuditRules:
@@ -278,9 +368,7 @@ def _records_for_work_scope(
     calibrated: list[CalibratedRecord], work_scope: str
 ) -> list[SourceRecord]:
     return [
-        item.record
-        for item in calibrated
-        if work_scope == "all" or item.work_scope == work_scope
+        item.record for item in calibrated if work_scope == "all" or item.work_scope == work_scope
     ]
 
 
@@ -383,6 +471,36 @@ def _nested_scope_links() -> list[tuple[str, str]]:
         ("Архив", "../archive/rop-dashboard.html"),
         ("Вся база", "../all/rop-dashboard.html"),
     ]
+
+
+def _acceptance_as_of(value: str, timezone: str) -> datetime:
+    zone = ZoneInfo(timezone)
+    if len(value) == 5 and value[2] == ":":
+        try:
+            hour, minute = (int(part) for part in value.split(":"))
+            return datetime.now(zone).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except ValueError as exc:
+            raise typer.BadParameter("as-of: используйте HH:MM или ISO datetime") from exc
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise typer.BadParameter("as-of: используйте HH:MM или ISO datetime") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=zone)
+    return parsed.astimezone(zone)
+
+
+def _load_processed_keys(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, list):
+        raise typer.BadParameter("ledger должен содержать JSON-массив")
+    return {
+        str(item["idempotency_key"])
+        for item in payload
+        if isinstance(item, dict) and item.get("idempotency_key")
+    }
 
 
 if __name__ == "__main__":

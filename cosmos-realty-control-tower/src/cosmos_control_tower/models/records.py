@@ -8,6 +8,7 @@ class SourceRecord(BaseModel):
     entity_type: str
     source_id: str
     assigned_to_id: str | None = None
+    assigned_at: datetime | None = None
     assignee_active: bool | None = None
     department_id: str | None = None
     stage_id: str | None = None

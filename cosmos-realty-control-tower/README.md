@@ -73,6 +73,26 @@ uv run cosmos-control report --snapshot output/rop/operational-snapshot.json
 полностью исключает подключение. Реализации write-методов и отправки уведомлений
 в проекте нет: роботы формируют только preview с `dry_run=true`.
 
+## Робот «Потеряшка» — только dry-run
+
+Утверждённое правило проверяет в 23:50 по Москве лиды, оставшиеся в стадии
+`Новый лид — раздача`. Без подключения к Bitrix24:
+
+```bash
+uv run cosmos-control acceptance-control --dry-run --as-of "23:50" --demo
+```
+
+Live read-only preview:
+
+```bash
+uv run cosmos-control acceptance-control --dry-run --as-of "23:50"
+```
+
+Bitrix24 пока не отдаёт точное время назначения ответственного, поэтому команда
+не подменяет его временем создания или изменения карточки и блокирует опасные
+возвраты. `--apply` существует только как закрытый интерфейс и завершается до
+подключения к CRM. Подробности: `docs/acceptance-control-rule.md`.
+
 ## Проверки
 
 ```bash
@@ -84,4 +104,4 @@ uv run mypy
 Подробности: `docs/architecture.md`, `docs/control-rules.md`,
 `docs/rules-calibration.md`, `docs/operational-scope.md`,
 `docs/exclusion-rules.md`, `docs/cosmos-business-data-model.md`,
-`docs/security.md`.
+`docs/acceptance-control-rule.md`, `docs/security.md`.

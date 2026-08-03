@@ -76,6 +76,18 @@ DASHBOARD_TEMPLATE = """<!doctype html>
     <td>{{ row.won }}</td><td>{{ row.crm_discipline_pct }}%</td>
     <td class="risk-{{ row.risk }}">{{ row.risk }}</td></tr>{% endfor %}
   </tbody></table></div>
+  <h2>Возвращено роботом за вчера</h2>
+  <div class="notice"><b>0 фактических возвратов.</b> Робот работает только в dry-run,
+    поэтому карточки не переназначались. Ниже показан предварительный контроль SLA,
+    а не выполненные действия.</div>
+  <div class="panel"><table><thead><tr><th>ID брокера</th><th>К возврату</th>
+    <th>Заблокировано данными</th><th>Доля непринятых</th><th>Неделя</th>
+    <th>Месяц</th></tr></thead><tbody>
+    {% for row in acceptance_brokers %}<tr><td>{{ row.user_id }}</td>
+    <td>{{ row.eligible }}</td><td>{{ row.blocked }}</td><td>—</td><td>—</td><td>—</td></tr>
+    {% endfor %}</tbody></table></div>
+  <p>Точные KPI «назначено / принято / возвращено» появятся после подключения
+    подтверждённой даты назначения ответственного и разрешения apply.</p>
   <h2>Воронка — текущий срез</h2>
   <div class="panel">{% for row in stages %}<div class="barrow"><span>{{ row.stage_id }}</span>
     <div class="bar"><i style="width:{{ row.share }}%"></i></div><b>{{ row.count }}</b>
@@ -120,10 +132,17 @@ def generate_operational_reports(
     *,
     scope: str,
     scope_links: list[tuple[str, str]] | None = None,
+    acceptance_summary: dict[str, Any] | None = None,
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     action_rows = [item.model_dump(mode="json") for item in actions]
-    payload = {"scope": scope, "dashboard": dashboard, "dry_run_actions": action_rows}
+    acceptance_summary = acceptance_summary or {}
+    payload = {
+        "scope": scope,
+        "dashboard": dashboard,
+        "dry_run_actions": action_rows,
+        "acceptance_control": acceptance_summary,
+    }
     (output_dir / "rop-report.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -156,6 +175,7 @@ def generate_operational_reports(
         forecast=dashboard["forecast"],
         recommendations=dashboard["recommendations"],
         scope_links=scope_links or [],
+        acceptance_brokers=acceptance_summary.get("by_broker", []),
     )
     (output_dir / "rop-dashboard.html").write_text(html, encoding="utf-8")
 
@@ -185,14 +205,11 @@ def _cards(summary: dict[str, Any]) -> list[dict[str, Any]]:
         ("commission_received", "Комиссии получены", "ok"),
     ]
     return [
-        {"value": summary[key], "label": label, "tone": tone}
-        for key, label, tone in definitions
+        {"value": summary[key], "label": label, "tone": tone} for key, label, tone in definitions
     ]
 
 
-def _markdown(
-    dashboard: dict[str, Any], actions: list[DryRunAction], *, scope: str
-) -> str:
+def _markdown(dashboard: dict[str, Any], actions: list[DryRunAction], *, scope: str) -> str:
     summary = dashboard["summary"]
     lines = [
         "# Cosmos Realty — отчёт РОПа",
