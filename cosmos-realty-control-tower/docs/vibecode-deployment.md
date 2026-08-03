@@ -1,5 +1,9 @@
 # Bitrix24 VibeCode deployment
 
+## Phase 0 proof
+
+The first deployed version deliberately contains no Control Tower business logic. It proves only that the app opens from the Bitrix24 menu and lead card, receives the employee and lead context, shows server time, and completes one aggregate read-only CRM request. After this is verified, the existing Control Tower interface can be connected without changing its business engine.
+
 ## Purpose
 
 VibeCode is a thin hosting and user-interface layer for the existing Cosmos Realty Control Tower. The Python rules engine, reports, calibration and business definitions remain canonical. The embedded app reads safe aggregates and displays previews; it does not implement or execute CRM write actions.

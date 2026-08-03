@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {buildServer} from "../server.mjs";
 
-test("dashboard declares dry-run and gateway icon", async () => {
+test("proof app declares dry-run, version and gateway icon", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   assert.match(html, /DRY_RUN/);
+  assert.match(html, /0\.0\.1/);
+  assert.match(html, /Проверить CRM/);
   assert.match(html, /\/_gw\/icon/);
 });
 
@@ -23,7 +25,7 @@ test("health proves write actions are disabled", async () => {
   await new Promise((resolve) => server.once("listening", resolve));
   const address = server.address();
   const response = await fetch(`http://127.0.0.1:${address.port}/health`);
-  assert.deepEqual(await response.json(), {status: "ok", mode: "DRY_RUN", writesPerformed: 0});
+  assert.deepEqual(await response.json(), {status: "ok", version: "0.0.1", mode: "DRY_RUN", writesPerformed: 0});
   await new Promise((resolve) => server.close(resolve));
 });
 

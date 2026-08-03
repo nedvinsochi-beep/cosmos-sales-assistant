@@ -8,7 +8,6 @@ const port = Number(process.env.PORT || 3000);
 const baseUrl = process.env.VIBE_API_BASE_URL || "https://vibecode.bitrix24.tech";
 const appKey = process.env.VIBE_APP_KEY;
 const personalKey = process.env.VIBE_API_KEY;
-const rulesPath = process.env.CONTROL_TOWER_RULES_PATH || resolve(root, "..", "config", "rules.example.json");
 
 function requestIdentity(request) {
   return {
@@ -44,46 +43,16 @@ async function vibe(request, path, body) {
   return {data: payload.data, authMode: auth.authMode};
 }
 
-async function configuredRules() {
-  const payload = JSON.parse(await readFile(rulesPath, "utf8"));
-  return payload.rules.map((rule) => ({
-    id: rule.rule_id,
-    name: rule.name,
-    description: rule.description,
-    mode: rule.mode === "ACTIVE" ? "DRY_RUN" : rule.mode,
-    schedule: rule.schedule,
-    owner: rule.owner,
-    actions: rule.actions.map((action) => action.type),
-  }));
-}
-
-async function summary(request) {
-  const [leadsResponse, tasksResponse, rules] = await Promise.all([
-    vibe(request, "/v1/leads/aggregate", {groupBy: ["stageId", "assignedById"]}),
-    vibe(request, "/v1/tasks/aggregate", {groupBy: ["status", "responsibleId"]}),
-    configuredRules(),
-  ]);
-  const leads = leadsResponse.data;
-  const tasks = tasksResponse.data;
-  const leadGroups = leads.groups || [];
-  const taskGroups = tasks.groups || [];
-  const distribution = leadGroups.filter((item) => item.stageId === "NEW")
-    .reduce((total, item) => total + Number(item.count || 0), 0);
-  const activeTasks = taskGroups.filter((item) => ["2", "3", "4"].includes(String(item.status)))
-    .reduce((total, item) => total + Number(item.count || 0), 0);
+async function crmCheck(request) {
+  const leadsResponse = await vibe(request, "/v1/leads/aggregate", {groupBy: ["stageId"]});
   return {
-    generatedAt: new Date().toISOString(),
+    checkedAt: new Date().toISOString(),
     mode: "DRY_RUN",
     authMode: leadsResponse.authMode,
-    currentUser: requestIdentity(request).userId,
+    currentUser: requestIdentity(request).userId || "OWNER_PREVIEW",
     writesPerformed: 0,
-    metrics: {leads: Number(leads.count || 0), distributionStage: distribution, tasks: Number(tasks.count || 0), activeTasks},
-    rules: rules.map((rule) => ({...rule, status: "DRY_RUN", candidates: rule.id === "MISSED_LEAD_ACCEPTANCE" ? distribution : null})),
-    limitations: [
-      "Расчёты правил остаются в существующем Cosmos Control Tower",
-      "Клиентские ФИО, телефоны, email и комментарии интерфейс не сохраняет",
-      "Write-операции, уведомления и изменения CRM заблокированы",
-    ],
+    result: "CRM_READ_OK",
+    leadCount: Number(leadsResponse.data.count || 0),
   };
 }
 
@@ -103,8 +72,9 @@ export function buildServer() {
   return createServer(async (request, response) => {
     try {
       const url = new URL(request.url, "http://localhost");
-      if (url.pathname === "/health") return json(response, 200, {status: "ok", mode: "DRY_RUN", writesPerformed: 0});
-      if (url.pathname === "/api/summary") return json(response, 200, await summary(request));
+      if (url.pathname === "/health") return json(response, 200, {status: "ok", version: "0.0.1", mode: "DRY_RUN", writesPerformed: 0});
+      if (url.pathname === "/api/context") return json(response, 200, {currentUser: requestIdentity(request).userId, serverTime: new Date().toISOString(), ...placementContext(url)});
+      if (url.pathname === "/api/crm-check") return json(response, 200, await crmCheck(request));
       if (url.pathname === "/api/placement") {
         const context = placementContext(url);
         return json(response, 200, {...context, mode: "DRY_RUN", status: context.entityId ? "REVIEW_REQUIRED" : "NO_CARD_CONTEXT", violations: [], nextStep: null});
