@@ -35,14 +35,23 @@ from cosmos_control_tower.operational.service import (
 from cosmos_control_tower.reports.generator import generate_reports
 from cosmos_control_tower.reports.operational import generate_operational_reports
 from cosmos_control_tower.robots.dry_run import preview_actions
+from cosmos_control_tower.rules_engine.config import load_rules
+from cosmos_control_tower.rules_engine.engine import RulesEngine
+from cosmos_control_tower.rules_engine.ledger import load_processed_keys
+from cosmos_control_tower.rules_engine.models import RuleDefinition, RuleRunResult, RulesRunReport
+from cosmos_control_tower.rules_engine.report import generate_rules_report
 
 app = typer.Typer(help="Cosmos Realty Control Tower read-only tools")
+rules_app = typer.Typer(help="Configurable control rules; all writes are blocked")
+app.add_typer(rules_app, name="rules")
 DEFAULT_ROP_OUTPUT = Path("output/rop")
 DEFAULT_CALIBRATION_OUTPUT = Path("output")
 DEFAULT_CALIBRATION_RULES = Path("config/calibration-rules.example.json")
 DEFAULT_ACCEPTANCE_OUTPUT = Path("output/acceptance-control")
 DEFAULT_ACCEPTANCE_RULE = Path("config/acceptance-rule.json")
 DEFAULT_ORGANIZATION_MAP = Path("config/organization-map.example.json")
+DEFAULT_RULES_CONFIG = Path("config/rules.example.json")
+DEFAULT_RULES_OUTPUT = Path("output/rules")
 
 
 def _configure_logging() -> None:
@@ -102,6 +111,89 @@ def demo(output: Path = Path("output")) -> None:
         encoding="utf-8",
     )
     typer.echo(f"Sanitized demo reports created: {output}")
+
+
+@rules_app.command("list")
+def rules_list(
+    config: Path = typer.Option(DEFAULT_RULES_CONFIG),  # noqa: B008
+) -> None:
+    """List configured rules without connecting to Bitrix24."""
+    for rule in load_rules(config):
+        typer.echo(
+            f"{rule.rule_id}\t{rule.name}\tmode={rule.mode}\t"
+            f"enabled={str(rule.enabled).lower()}\tschedule={rule.schedule} {rule.timezone}"
+        )
+
+
+@rules_app.command("preview")
+def rules_preview(
+    rule_id: str,
+    output: Path = typer.Option(DEFAULT_RULES_OUTPUT),  # noqa: B008
+    config: Path = typer.Option(DEFAULT_RULES_CONFIG),  # noqa: B008
+    organization_map: Path = typer.Option(DEFAULT_ORGANIZATION_MAP),  # noqa: B008
+    snapshot_file: Path | None = typer.Option(None, "--snapshot"),  # noqa: B008
+    demo_mode: bool = typer.Option(False, "--demo"),
+    as_of: str = typer.Option("23:50"),
+) -> None:
+    """Preview one rule. No Bitrix24 writes are possible."""
+    rule = _find_rule(config, rule_id)
+    result = _run_rule_preview(
+        rule,
+        output=output,
+        organization_map=organization_map,
+        snapshot_file=snapshot_file,
+        demo_mode=demo_mode,
+        as_of=as_of,
+    )
+    report = RulesRunReport(generated_at=datetime.now(UTC), results=[result])
+    generate_rules_report(output, report)
+    typer.echo(f"Rule: {result.rule_id}; status: {result.status}")
+    typer.echo(
+        f"Confirmed: {result.violations_found}; blocked: {result.blocked_by_data}; "
+        f"planned actions: {result.planned_actions}"
+    )
+    typer.echo("Bitrix24 writes: 0")
+
+
+@rules_app.command("apply")
+def rules_apply(rule_id: str) -> None:
+    """Closed technical entry point for a future approved apply workflow."""
+    typer.echo(
+        f"APPLY заблокирован для {rule_id}: ACTIVE/write операции не разрешены."
+    )
+    raise typer.Exit(code=2)
+
+
+@rules_app.command("run-all")
+def rules_run_all(
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    apply: bool = typer.Option(False, "--apply"),
+    output: Path = typer.Option(DEFAULT_RULES_OUTPUT),  # noqa: B008
+    config: Path = typer.Option(DEFAULT_RULES_CONFIG),  # noqa: B008
+    organization_map: Path = typer.Option(DEFAULT_ORGANIZATION_MAP),  # noqa: B008
+    demo_mode: bool = typer.Option(False, "--demo"),
+    as_of: str = typer.Option("23:50"),
+) -> None:
+    """Preview all enabled rules; apply is a closed safety gate."""
+    if dry_run == apply:
+        raise typer.BadParameter("Укажите ровно один режим: --dry-run или --apply")
+    if apply:
+        typer.echo("APPLY заблокирован: ACTIVE/write операции не разрешены.")
+        raise typer.Exit(code=2)
+    results = [
+        _run_rule_preview(
+            rule,
+            output=output / rule.rule_id.lower(),
+            organization_map=organization_map,
+            snapshot_file=None,
+            demo_mode=demo_mode,
+            as_of=as_of,
+        )
+        for rule in load_rules(config)
+    ]
+    report = RulesRunReport(generated_at=datetime.now(UTC), results=results)
+    generate_rules_report(output, report)
+    typer.echo(f"Rules completed: {len(results)}; Bitrix24 writes: 0")
 
 
 @app.command("acceptance-control")
@@ -172,6 +264,16 @@ def acceptance_control(
         as_of=check_at,
         processed_keys=_load_processed_keys(ledger),
     )
+    engine_result = RulesEngine().run(
+        _find_rule(DEFAULT_RULES_CONFIG, "MISSED_LEAD_ACCEPTANCE"),
+        records,
+        heads,
+        organization,
+        as_of=check_at,
+        processed_keys=_load_processed_keys(ledger),
+    )
+    if engine_result.violations_found != report_data.eligible_to_return:
+        raise RuntimeError("Legacy acceptance report and rules engine disagree")
     generate_acceptance_reports(output, report_data)
     typer.echo(f"Acceptance dry-run: {output / 'acceptance-report.html'}")
     typer.echo(f"Eligible actions: {report_data.eligible_to_return}")
@@ -439,6 +541,94 @@ def _apply_scope(
     return records, filtered_violations, scope
 
 
+def _find_rule(config: Path, rule_id: str) -> RuleDefinition:
+    for rule in load_rules(config):
+        if rule.rule_id == rule_id:
+            return rule
+    raise typer.BadParameter(f"Правило не найдено: {rule_id}")
+
+
+def _run_rule_preview(
+    rule: RuleDefinition,
+    *,
+    output: Path,
+    organization_map: Path,
+    snapshot_file: Path | None,
+    demo_mode: bool,
+    as_of: str,
+) -> RuleRunResult:
+    if demo_mode and snapshot_file:
+        raise typer.BadParameter("Нельзя одновременно использовать --demo и --snapshot")
+    check_at = _acceptance_as_of(as_of, rule.timezone)
+    if snapshot_file:
+        snapshot = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    elif demo_mode:
+        snapshot = (
+            acceptance_demo_snapshot(check_at)
+            if rule.evaluator == "missed_lead_acceptance"
+            else demo_snapshot()
+        )
+    else:
+        snapshot = _collect_live_rule_snapshot(rule, check_at)
+        output.mkdir(parents=True, exist_ok=True)
+        (output / "rule-snapshot.json").write_text(
+            json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    if not isinstance(snapshot, dict):
+        raise typer.BadParameter("snapshot должен содержать JSON-объект")
+    records = records_from_snapshot(snapshot)
+    if rule.evaluator == "no_next_step":
+        calibration = CalibrationRules.model_validate_json(
+            DEFAULT_CALIBRATION_RULES.read_text(encoding="utf-8")
+        )
+        records = [
+            item.record
+            for item in classify_records(records, calibration, now=check_at.astimezone(UTC))
+            if item.work_scope == "operational"
+        ]
+    raw_heads = snapshot.get("department_heads", {})
+    heads = (
+        {str(key): str(value) for key, value in raw_heads.items()}
+        if isinstance(raw_heads, dict)
+        else {}
+    )
+    organization = OrganizationMap.model_validate_json(
+        organization_map.read_text(encoding="utf-8")
+    )
+    if demo_mode and organization.poteryashka_user_id is None:
+        organization.poteryashka_user_id = "999"
+    return RulesEngine().run(
+        rule,
+        records,
+        heads,
+        organization,
+        as_of=check_at,
+        processed_keys=load_processed_keys(output / "ledger.json"),
+    )
+
+
+def _collect_live_rule_snapshot(rule: RuleDefinition, check_at: datetime) -> dict[str, object]:
+    _configure_logging()
+    settings = Settings()  # type: ignore[call-arg]
+
+    async def collect() -> dict[str, object]:
+        webhook = settings.webhook_secret.get_secret_value()
+        async with BitrixClient(
+            webhook,
+            timeout=settings.bitrix_timeout_seconds,
+            rate_limit_per_second=settings.bitrix_rate_limit_per_second,
+            max_retries=settings.bitrix_max_retries,
+        ) as client:
+            if rule.evaluator == "missed_lead_acceptance":
+                return await AcceptanceService(client, webhook).collect(
+                    day_start=check_at.replace(hour=0, minute=0, second=0, microsecond=0)
+                )
+            operational = await OperationalService(client, webhook, AuditRules()).collect()
+            return dict(operational)
+
+    return asyncio.run(collect())
+
+
 def _period_start(period: str) -> datetime:
     now = datetime.now(UTC)
     if period == "today":
@@ -457,6 +647,7 @@ def _parse_date_filter(value: str, option: str) -> datetime:
 
 def _main_scope_links() -> list[tuple[str, str]]:
     return [
+        ("Правила контроля", "../rules/rules-dashboard.html"),
         ("Оперативная работа", "scopes/operational/rop-dashboard.html"),
         ("Прогрев", "scopes/warm/rop-dashboard.html"),
         ("Архив", "scopes/archive/rop-dashboard.html"),
@@ -466,6 +657,7 @@ def _main_scope_links() -> list[tuple[str, str]]:
 
 def _nested_scope_links() -> list[tuple[str, str]]:
     return [
+        ("Правила контроля", "../../../rules/rules-dashboard.html"),
         ("Оперативная работа", "../operational/rop-dashboard.html"),
         ("Прогрев", "../warm/rop-dashboard.html"),
         ("Архив", "../archive/rop-dashboard.html"),

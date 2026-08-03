@@ -18,6 +18,9 @@ class SourceRecord(BaseModel):
     last_activity_at: datetime | None = None
     next_activity_at: datetime | None = None
     has_open_activity: bool | None = None
+    next_task_at: datetime | None = None
+    has_open_task: bool | None = None
+    task_data_complete: bool = False
     has_first_call: bool | None = None
     activity_data_complete: bool = True
     source_channel_id: str | None = None

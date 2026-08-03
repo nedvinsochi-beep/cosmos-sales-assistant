@@ -93,6 +93,21 @@ Bitrix24 пока не отдаёт точное время назначения
 возвраты. `--apply` существует только как закрытый интерфейс и завершается до
 подключения к CRM. Подробности: `docs/acceptance-control-rule.md`.
 
+## Правила контроля
+
+«Потеряшка» и «Без следующего шага» работают через общий небольшой движок:
+
+```bash
+uv run cosmos-control rules list
+uv run cosmos-control rules preview MISSED_LEAD_ACCEPTANCE --demo
+uv run cosmos-control rules preview NO_NEXT_STEP --demo
+uv run cosmos-control rules run-all --dry-run --demo
+```
+
+Конфигурация: `config/rules.example.json`, контракт:
+`schemas/rule.schema.json`, экран: `output/rules/rules-dashboard.html`.
+`ACTIVE` и `--apply` заблокированы. Подробности: `docs/rules-engine.md`.
+
 ## Проверки
 
 ```bash
@@ -104,4 +119,4 @@ uv run mypy
 Подробности: `docs/architecture.md`, `docs/control-rules.md`,
 `docs/rules-calibration.md`, `docs/operational-scope.md`,
 `docs/exclusion-rules.md`, `docs/cosmos-business-data-model.md`,
-`docs/acceptance-control-rule.md`, `docs/security.md`.
+`docs/acceptance-control-rule.md`, `docs/rules-engine.md`, `docs/security.md`.
