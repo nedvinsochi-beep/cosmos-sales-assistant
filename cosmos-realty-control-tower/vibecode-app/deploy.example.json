@@ -1,0 +1,13 @@
+{
+  "displayName": "Cosmos Realty Control Tower",
+  "description": "Read-only CRM discipline dashboard and dry-run control rules",
+  "provider": "bitrix-cloud",
+  "plan": "bc-micro",
+  "region": "ru-moscow-a",
+  "port": 3000,
+  "workdir": "cosmos-realty-control-tower/vibecode-app",
+  "startCommand": "npm start",
+  "accessPolicy": "OWNER_ONLY",
+  "environment": ["VIBE_APP_KEY"],
+  "favicon": "/_gw/icon"
+}
