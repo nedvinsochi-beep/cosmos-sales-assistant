@@ -1,0 +1,8 @@
+{
+  "discoverFirst": "GET /v1/placements/available",
+  "requested": [
+    {"purpose": "main_menu", "group": "Menu", "title": "Cosmos Control Tower"},
+    {"purpose": "lead_card", "preferredCode": "CRM_LEAD_DETAIL_TAB", "title": "Контроль Cosmos"}
+  ],
+  "note": "Do not bind until codes are confirmed live and a vibe_app key with placement scope is available."
+}

@@ -33,6 +33,8 @@ READ_ONLY_METHODS = frozenset(
         "crm.lead.fields",
         "crm.deal.list",
         "crm.deal.fields",
+        "crm.contact.fields",
+        "crm.company.fields",
         "crm.dealcategory.list",
         "crm.dealcategory.default.get",
         "crm.dealcategory.stage.list",
@@ -43,6 +45,17 @@ READ_ONLY_METHODS = frozenset(
         "crm.activity.type.list",
         "tasks.task.list",
         "task.item.list",
+        "task.item.userfield.getlist",
+        "sonet_group.get",
+        "bizproc.workflow.template.list",
+        "bizproc.workflow.instance.list",
+        "bizproc.robot.list",
+        "bizproc.task.list",
+        "crm.automation.trigger.list",
+        "voximplant.line.get",
+        "voximplant.sip.get",
+        "disk.storage.getlist",
+        "landing.site.getlist",
     }
 )
 

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/_gw/icon"><title>Cosmos Control</title>
+<style>
+:root{--ink:#172033;--muted:#647085;--blue:#275fe8;--line:#dfe5ee;--ok:#16784b}*{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:720px;margin:48px auto;padding:0 20px}.shell{background:#fff;border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 12px 40px #17203312}h1{margin:0 0 8px;font-size:32px}p{color:var(--muted)}dl{display:grid;grid-template-columns:180px 1fr;gap:10px;margin:28px 0;padding:20px 0;border-block:1px solid var(--line)}dt{color:var(--muted)}dd{margin:0;font-weight:650;overflow-wrap:anywhere}button{border:0;border-radius:10px;padding:12px 18px;background:var(--blue);color:#fff;font:700 15px inherit;cursor:pointer}button:disabled{opacity:.55}.result{margin-top:18px;padding:14px;border-radius:10px;background:#edf8f2;color:var(--ok)}.safe{font-size:14px}
+@media(max-width:560px){main{margin:20px auto}.shell{padding:22px}dl{grid-template-columns:1fr;gap:2px}dd{margin-bottom:10px}}
+</style></head><body><main><section class="shell"><h1>Cosmos Control</h1><p>Добро пожаловать. Подключение работает.</p>
+<dl><dt>Версия</dt><dd>0.0.1</dd><dt>Текущий пользователь</dt><dd id="user">проверяется…</dd><dt>ID текущего лида</dt><dd id="lead">открыто вне карточки</dd><dt>Время сервера</dt><dd id="time">проверяется…</dd><dt>Режим</dt><dd>DRY_RUN</dd></dl>
+<button id="check">Проверить CRM</button><div id="result" class="result" hidden></div><p class="safe">Проверка только читает агрегированное количество лидов. Изменения CRM, правила и роботы не запускаются.</p></section></main>
+<script>
+const params=new URLSearchParams(location.search);async function context(){const r=await fetch('/api/context?'+params.toString());const d=await r.json();user.textContent=d.currentUser||'сессия сотрудника не получена';lead.textContent=d.entityId||'открыто вне карточки';time.textContent=new Date(d.serverTime).toLocaleString('ru-RU')}
+check.onclick=async()=>{check.disabled=true;result.hidden=false;result.textContent='Проверяем read-only доступ…';try{const r=await fetch('/api/crm-check');const d=await r.json();if(!r.ok)throw new Error(d.detail||d.error);result.textContent=`CRM доступна. Лидов в агрегате: ${d.leadCount}. Изменений выполнено: ${d.writesPerformed}.`;}catch(e){result.textContent=`Проверка не пройдена: ${e.message}`}finally{check.disabled=false}};
+context();new ResizeObserver(()=>window.parent.postMessage({type:'vibe:resize',height:document.documentElement.scrollHeight},'*')).observe(document.body);
+</script></body></html>

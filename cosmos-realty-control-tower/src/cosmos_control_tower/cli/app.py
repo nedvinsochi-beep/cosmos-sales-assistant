@@ -12,6 +12,7 @@ from cosmos_control_tower.acceptance.engine import evaluate_acceptance
 from cosmos_control_tower.acceptance.models import AcceptanceRule, OrganizationMap
 from cosmos_control_tower.acceptance.report import generate_acceptance_reports
 from cosmos_control_tower.acceptance.service import AcceptanceService
+from cosmos_control_tower.audit.portal import PortalAuditService
 from cosmos_control_tower.audit.rules import AuditRules, evaluate_record
 from cosmos_control_tower.audit.service import AuditService
 from cosmos_control_tower.bitrix.client import BitrixClient
@@ -76,6 +77,26 @@ def audit_bitrix(output: Path = Path("output")) -> None:
 
     asyncio.run(run())
     typer.echo(f"Read-only audit completed: {output}")
+
+
+@app.command("audit-portal")
+def audit_portal(output: Path = Path("audit")) -> None:
+    """Export a redacted configuration-only portal inventory."""
+    _configure_logging()
+    settings = Settings()  # type: ignore[call-arg]
+
+    async def run() -> None:
+        async with BitrixClient(
+            settings.webhook_secret.get_secret_value(),
+            timeout=settings.bitrix_timeout_seconds,
+            rate_limit_per_second=settings.bitrix_rate_limit_per_second,
+            max_retries=settings.bitrix_max_retries,
+        ) as client:
+            summary = await PortalAuditService(client, output).run()
+            typer.echo(json.dumps(summary, ensure_ascii=False))
+
+    asyncio.run(run())
+    typer.echo(f"Read-only portal audit completed: {output}; Bitrix24 writes: 0")
 
 
 @app.command()
